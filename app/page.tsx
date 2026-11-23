@@ -5,18 +5,22 @@ import Link from 'next/link';
 import DishImage from '@/components/DishImage';
 
 export default function CustomerMenu() {
+  const [restaurantName, setRestaurantName] = useState('Counter Order');
   const [menu, setMenu] = useState<any[]>([]);
   const [cart, setCart] = useState<Record<string, any>>({});
   const [step, setStep] = useState<'MENU' | 'CHECKOUT'>('MENU');
   
-  // Filters
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [vegOnly, setVegOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Customer & Order States
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [generatedOtp, setGeneratedOtp] = useState('');
+  const [otpInput, setOtpInput] = useState('');
+  const [showOtpBox, setShowOtpBox] = useState(false);
+
   const [activeOrder, setActiveOrder] = useState<any>(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [rating, setRating] = useState(5);
@@ -44,6 +48,10 @@ export default function CustomerMenu() {
   };
 
   useEffect(() => {
+    fetch('/api/settings').then((r) => r.json()).then((s) => {
+      if (s.restaurant_name) setRestaurantName(s.restaurant_name);
+    });
+
     fetch('/api/menu')
       .then((r) => r.json())
       .then((data) => setMenu(data.filter((i: any) => i.in_stock)));
@@ -55,6 +63,7 @@ export default function CustomerMenu() {
     if (savedName) setName(savedName);
     if (savedPhone) {
       setPhone(savedPhone);
+      setPhoneVerified(true);
       syncCustomerOrders(savedPhone, savedActiveOrder);
       const interval = setInterval(() => {
         syncCustomerOrders(savedPhone, localStorage.getItem('active_order_no'));
@@ -63,10 +72,8 @@ export default function CustomerMenu() {
     }
   }, []);
 
-  // Extract unique categories dynamically
   const categories = ['All', ...Array.from(new Set(menu.map((item) => item.category)))];
 
-  // Filtered Menu
   const filteredMenu = menu.filter((item) => {
     const matchCategory = selectedCategory === 'All' || item.category === selectedCategory;
     const matchVeg = !vegOnly || item.type === 'VEG';
@@ -98,10 +105,27 @@ export default function CustomerMenu() {
   const cartItems = Object.values(cart);
   const total = cartItems.reduce((sum, i) => sum + i.price * i.qty, 0);
 
-  const openPaymentGateway = () => {
-    if (!name.trim() || phone.length < 10) {
-      return alert('Please enter valid Name and 10-digit Phone Number');
+  // Demo OTP Sender (Zero SMS Cost)
+  const sendDemoOtp = () => {
+    if (phone.length !== 10) return alert('Enter valid 10-digit mobile number');
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+    setGeneratedOtp(code);
+    setOtpInput('');
+    setShowOtpBox(true);
+  };
+
+  const verifyDemoOtp = () => {
+    if (otpInput === generatedOtp) {
+      setPhoneVerified(true);
+      setShowOtpBox(false);
+    } else {
+      alert('Wrong OTP! Check the demo OTP shown on screen.');
     }
+  };
+
+  const openPaymentGateway = () => {
+    if (!name.trim()) return alert('Please enter your Name');
+    if (!phoneVerified) return alert('Please verify your 10-digit Phone Number first');
     setPaymentError(false);
     setShowGateway(true);
   };
@@ -126,7 +150,17 @@ export default function CustomerMenu() {
     setPaymentError(true);
   };
 
-  const handleReviewSubmit = () => {
+  const handleReviewSubmit = async () => {
+    await fetch('/api/reviews', {
+      method: 'POST',
+      body: JSON.stringify({
+        order_no: activeOrder?.order_no,
+        name: activeOrder?.name || name,
+        phone: activeOrder?.phone || phone,
+        rating,
+        comment: reviewText,
+      }),
+    });
     setReviewSubmitted(true);
     setTimeout(() => {
       localStorage.removeItem('active_order_no');
@@ -139,10 +173,9 @@ export default function CustomerMenu() {
 
   return (
     <div className="max-w-md mx-auto p-4 pb-28 font-sans min-h-screen">
-      {/* Header */}
       <div className="flex justify-between items-start mb-4">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">🍽️ Counter Order</h1>
+          <h1 className="text-2xl font-extrabold tracking-tight">🍽️ {restaurantName}</h1>
           <p className="text-xs text-gray-500">Order fresh, pay online & pick up at counter</p>
         </div>
         {pastOrders.length > 0 && (
@@ -155,7 +188,7 @@ export default function CustomerMenu() {
         )}
       </div>
 
-      {/* Active Order Banner */}
+      {/* Banner 1: PREPARING */}
       {activeOrder && activeOrder.status === 'PREPARING' && (
         <Link
           href={`/order/${activeOrder.order_no}`}
@@ -172,13 +205,18 @@ export default function CustomerMenu() {
         </Link>
       )}
 
-      {activeOrder && activeOrder.status === 'READY' && (
+      {/* Banner 2: READY or PICKED_UP -> Give Review */}
+      {activeOrder && (activeOrder.status === 'READY' || activeOrder.status === 'PICKED_UP') && (
         <div className="mb-4 bg-green-50 border-2 border-green-500 p-3.5 rounded-2xl shadow-sm flex justify-between items-center gap-2">
           <div className="flex items-center gap-2.5">
-            <span className="text-2xl">🎉</span>
+            <span className="text-2xl">{activeOrder.status === 'PICKED_UP' ? '😋' : '🎉'}</span>
             <div>
-              <p className="text-xs font-bold text-green-700 uppercase">Order #{activeOrder.order_no} Ready!</p>
-              <p className="text-sm font-extrabold text-gray-900">Pick up & share your feedback</p>
+              <p className="text-xs font-bold text-green-700 uppercase">
+                {activeOrder.status === 'PICKED_UP' ? `Order #${activeOrder.order_no} Enjoyed?` : `Order #${activeOrder.order_no} Ready!`}
+              </p>
+              <p className="text-sm font-extrabold text-gray-900">
+                {activeOrder.status === 'PICKED_UP' ? 'Rate your meal experience' : 'Pick up & share feedback'}
+              </p>
             </div>
           </div>
           <button
@@ -190,7 +228,6 @@ export default function CustomerMenu() {
         </div>
       )}
 
-      {/* Past Orders Drawer */}
       {showHistory && (
         <div className="mb-5 bg-white p-4 rounded-2xl border border-gray-200 shadow-sm space-y-3">
           <div className="flex justify-between items-center border-b pb-2">
@@ -213,7 +250,6 @@ export default function CustomerMenu() {
 
       {step === 'MENU' ? (
         <>
-          {/* Search + Veg Only Filter Bar */}
           <div className="flex gap-2 mb-3">
             <input
               type="text"
@@ -235,8 +271,7 @@ export default function CustomerMenu() {
             </button>
           </div>
 
-          {/* Horizontal Category Pills */}
-          <div className="flex gap-2 overflow-x-auto pb-3 mb-2 no-scrollbar">
+          <div className="flex gap-2 overflow-x-auto pb-3 mb-2">
             {categories.map((cat) => (
               <button
                 key={cat}
@@ -252,7 +287,6 @@ export default function CustomerMenu() {
             ))}
           </div>
 
-          {/* Menu Items List */}
           <div className="space-y-3">
             {filteredMenu.length === 0 ? (
               <p className="text-center text-gray-400 text-sm py-10">No items match your filter.</p>
@@ -263,21 +297,17 @@ export default function CustomerMenu() {
 
                   <div className="flex-1">
                     <div className="flex items-center gap-1.5">
-                      {/* Indian Veg / Non-Veg Symbol */}
                       {item.type === 'VEG' ? (
-                        <span title="Veg" className="w-3.5 h-3.5 border border-green-600 flex items-center justify-center rounded-sm">
+                        <span className="w-3.5 h-3.5 border border-green-600 flex items-center justify-center rounded-sm">
                           <span className="w-1.5 h-1.5 bg-green-600 rounded-full"></span>
                         </span>
                       ) : (
-                        <span title="Non-Veg" className="w-3.5 h-3.5 border border-red-600 flex items-center justify-center rounded-sm">
+                        <span className="w-3.5 h-3.5 border border-red-600 flex items-center justify-center rounded-sm">
                           <span className="w-1.5 h-1.5 bg-red-600 rounded-full"></span>
                         </span>
                       )}
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-                        {item.category}
-                      </span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{item.category}</span>
                     </div>
-
                     <h3 className="font-bold text-base mt-1 leading-snug">{item.name}</h3>
                     <p className="text-gray-800 font-extrabold mt-0.5">₹{item.price}</p>
                   </div>
@@ -316,7 +346,6 @@ export default function CustomerMenu() {
           )}
         </>
       ) : (
-        /* Checkout Screen (Pre-payment Edit) */
         <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
           <div className="flex justify-between items-center">
             <h2 className="text-xl font-extrabold">Review & Edit Order</h2>
@@ -353,27 +382,66 @@ export default function CustomerMenu() {
               </div>
             ))}
             <div className="flex justify-between font-extrabold text-lg border-t pt-2.5">
-              <span>Total Payable</span>
+              <span>Total Payable (incl. GST)</span>
               <span>₹{total}</span>
             </div>
           </div>
 
+          {/* Customer Details + Free Demo OTP Verification */}
           <div className="space-y-3 pt-1">
-            <h3 className="font-bold text-sm text-gray-700">Customer Details</h3>
+            <h3 className="font-bold text-sm text-gray-700">Customer Details & Verification</h3>
             <input
               placeholder="Your Name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full border border-gray-300 p-3 rounded-xl focus:outline-none focus:border-black"
             />
-            <input
-              placeholder="Phone Number (10 digits)"
-              type="tel"
-              maxLength={10}
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="w-full border border-gray-300 p-3 rounded-xl focus:outline-none focus:border-black"
-            />
+            <div className="flex gap-2">
+              <input
+                placeholder="10-digit Mobile Number"
+                type="tel"
+                maxLength={10}
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value.replace(/\D/g, ''));
+                  setPhoneVerified(false);
+                }}
+                className="flex-1 border border-gray-300 p-3 rounded-xl focus:outline-none focus:border-black"
+              />
+              {phoneVerified ? (
+                <span className="bg-green-100 text-green-800 px-3.5 rounded-xl flex items-center text-xs font-extrabold">
+                  ✓ Verified
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={sendDemoOtp}
+                  className="bg-gray-900 text-white px-4 rounded-xl text-xs font-bold shrink-0"
+                >
+                  Verify OTP
+                </button>
+              )}
+            </div>
+
+            {showOtpBox && !phoneVerified && (
+              <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl space-y-2">
+                <p className="text-xs text-blue-800 font-semibold">
+                  📲 Demo SMS OTP: <span className="font-black text-sm tracking-widest bg-white px-2 py-0.5 rounded border">{generatedOtp}</span>
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    placeholder="Enter 4-digit OTP"
+                    maxLength={4}
+                    value={otpInput}
+                    onChange={(e) => setOtpInput(e.target.value)}
+                    className="flex-1 border bg-white p-2 rounded-lg text-sm font-bold tracking-widest"
+                  />
+                  <button type="button" onClick={verifyDemoOtp} className="bg-blue-600 text-white px-4 rounded-lg text-xs font-bold">
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <button
@@ -385,7 +453,6 @@ export default function CustomerMenu() {
         </div>
       )}
 
-      {/* Test Payment Gateway Modal */}
       {showGateway && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4">
@@ -397,7 +464,7 @@ export default function CustomerMenu() {
               <button onClick={() => setShowGateway(false)} className="text-gray-400 hover:text-black text-xl font-bold">✕</button>
             </div>
             <div className="bg-gray-50 p-3 rounded-xl text-xs text-gray-600 space-y-1">
-              <p><strong>Customer:</strong> {name} ({phone})</p>
+              <p><strong>Customer:</strong> {name} ({phone} ✓)</p>
               <p><strong>Methods:</strong> UPI (GPay / PhonePe) • Cards • NetBanking</p>
             </div>
             <div className="space-y-2.5 pt-2">
@@ -412,14 +479,13 @@ export default function CustomerMenu() {
         </div>
       )}
 
-      {/* Feedback Modal */}
       {showReviewModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl text-center space-y-4">
             {reviewSubmitted ? (
               <div className="py-6 space-y-2">
                 <div className="text-5xl">🙌</div>
-                <h3 className="text-xl font-extrabold text-green-700">Thank You for Your Review!</h3>
+                <h3 className="text-xl font-extrabold text-green-700">Saved to Reviews!</h3>
               </div>
             ) : (
               <>
